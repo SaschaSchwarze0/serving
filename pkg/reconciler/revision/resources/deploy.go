@@ -80,8 +80,9 @@ var (
 	userLifecycle = &corev1.Lifecycle{
 		PreStop: &corev1.Handler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Port: intstr.FromInt(networking.QueueAdminPort),
-				Path: queue.RequestQueueDrainPath,
+				Port:   intstr.FromInt(networking.QueueAdminPort),
+				Path:   queue.RequestQueueDrainPath,
+				Scheme: corev1.URISchemeHTTP,
 			},
 		},
 	}
@@ -106,8 +107,19 @@ func rewriteUserProbe(p *corev1.Probe, userPort int) {
 	}
 }
 
-func makePodSpec(rev *v1.Revision, cfg *config.Config) (*corev1.PodSpec, error) {
-	queueContainer, err := makeQueueContainer(rev, cfg)
+func makePodSpec(rev *v1.Revision, cfg *config.Config, previous *corev1.PodSpec) (*corev1.PodSpec, error) {
+	var previousQueueContainer *corev1.Container
+	var previousUserContainers []corev1.Container
+	if previous != nil {
+		for _, candidate := range previous.Containers {
+			if candidate.Name == QueueContainerName {
+				previousQueueContainer = &candidate
+			} else {
+				previousUserContainers = append(previousUserContainers, candidate)
+			}
+		}
+	}
+	queueContainer, err := makeQueueContainer(rev, cfg, previousQueueContainer)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create queue-proxy container: %w", err)
@@ -120,7 +132,7 @@ func makePodSpec(rev *v1.Revision, cfg *config.Config) (*corev1.PodSpec, error) 
 		extraVolumes = append(extraVolumes, varTokenVolume)
 	}
 
-	podSpec := BuildPodSpec(rev, append(BuildUserContainers(rev), *queueContainer), cfg)
+	podSpec := BuildPodSpec(rev, append(BuildUserContainers(rev, previousUserContainers), *queueContainer), cfg, previous)
 	podSpec.Volumes = append(podSpec.Volumes, extraVolumes...)
 
 	if cfg.Observability.EnableVarLogCollection {
@@ -144,14 +156,21 @@ func makePodSpec(rev *v1.Revision, cfg *config.Config) (*corev1.PodSpec, error) 
 }
 
 // BuildUserContainers makes an array of containers from the Revision template.
-func BuildUserContainers(rev *v1.Revision) []corev1.Container {
+func BuildUserContainers(rev *v1.Revision, previous []corev1.Container) []corev1.Container {
 	containers := make([]corev1.Container, 0, len(rev.Spec.PodSpec.Containers))
 	for i := range rev.Spec.PodSpec.Containers {
 		var container corev1.Container
+		var previousContainer *corev1.Container
+		for _, candidate := range previous {
+			if candidate.Name == rev.Spec.PodSpec.Containers[i].Name {
+				previousContainer = &candidate
+				break
+			}
+		}
 		if len(rev.Spec.PodSpec.Containers[i].Ports) != 0 || len(rev.Spec.PodSpec.Containers) == 1 {
-			container = makeServingContainer(*rev.Spec.PodSpec.Containers[i].DeepCopy(), rev)
+			container = makeServingContainer(*rev.Spec.PodSpec.Containers[i].DeepCopy(), rev, previousContainer)
 		} else {
-			container = makeContainer(*rev.Spec.PodSpec.Containers[i].DeepCopy(), rev)
+			container = makeContainer(*rev.Spec.PodSpec.Containers[i].DeepCopy(), rev, previousContainer)
 		}
 		// The below logic is safe because the image digests in Status.ContainerStatus will have been resolved
 		// before this method is called. We check for an empty array here because the method can also be
@@ -166,7 +185,7 @@ func BuildUserContainers(rev *v1.Revision) []corev1.Container {
 	return containers
 }
 
-func makeContainer(container corev1.Container, rev *v1.Revision) corev1.Container {
+func makeContainer(container corev1.Container, rev *v1.Revision, previousContainer *corev1.Container) corev1.Container {
 	// Adding or removing an overwritten corev1.Container field here? Don't forget to
 	// update the fieldmasks / validations in pkg/apis/serving
 	container.Lifecycle = userLifecycle
@@ -178,16 +197,20 @@ func makeContainer(container corev1.Container, rev *v1.Revision) corev1.Containe
 	if container.TerminationMessagePolicy == "" {
 		container.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
 	}
+	if previousContainer != nil {
+		container.ImagePullPolicy = previousContainer.ImagePullPolicy
+		container.TerminationMessagePath = previousContainer.TerminationMessagePath
+	}
 	return container
 }
 
-func makeServingContainer(servingContainer corev1.Container, rev *v1.Revision) corev1.Container {
+func makeServingContainer(servingContainer corev1.Container, rev *v1.Revision, previousContainer *corev1.Container) corev1.Container {
 	userPort := getUserPort(rev)
 	userPortStr := strconv.Itoa(int(userPort))
 	// Replacement is safe as only up to a single port is allowed on the Revision
 	servingContainer.Ports = buildContainerPorts(userPort)
 	servingContainer.Env = append(servingContainer.Env, buildUserPortEnv(userPortStr))
-	container := makeContainer(servingContainer, rev)
+	container := makeContainer(servingContainer, rev, previousContainer)
 	if container.ReadinessProbe != nil {
 		if container.ReadinessProbe.HTTPGet != nil || container.ReadinessProbe.TCPSocket != nil {
 			// HTTP and TCP ReadinessProbes are executed by the queue-proxy directly against the
@@ -202,12 +225,18 @@ func makeServingContainer(servingContainer corev1.Container, rev *v1.Revision) c
 
 // BuildPodSpec creates a PodSpec from the given revision and containers.
 // cfg can be passed as nil if not within revision reconciliation context.
-func BuildPodSpec(rev *v1.Revision, containers []corev1.Container, cfg *config.Config) *corev1.PodSpec {
+func BuildPodSpec(rev *v1.Revision, containers []corev1.Container, cfg *config.Config, previous *corev1.PodSpec) *corev1.PodSpec {
 	pod := rev.Spec.PodSpec.DeepCopy()
 	pod.Containers = containers
 	pod.TerminationGracePeriodSeconds = rev.Spec.TimeoutSeconds
 	if cfg != nil && pod.EnableServiceLinks == nil {
 		pod.EnableServiceLinks = cfg.Defaults.EnableServiceLinks
+	}
+	if previous != nil {
+		pod.DNSPolicy = previous.DNSPolicy
+		pod.RestartPolicy = previous.RestartPolicy
+		pod.SchedulerName = previous.SchedulerName
+		pod.SecurityContext = previous.SecurityContext
 	}
 	return pod
 }
@@ -226,6 +255,7 @@ func buildContainerPorts(userPort int32) []corev1.ContainerPort {
 	return []corev1.ContainerPort{{
 		Name:          v1.UserPortName,
 		ContainerPort: userPort,
+		Protocol:      corev1.ProtocolTCP,
 	}}
 }
 
@@ -234,14 +264,16 @@ func buildVarLogSubpathEnvs() []corev1.EnvVar {
 		Name: "K_INTERNAL_POD_NAME",
 		ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{
-				FieldPath: "metadata.name",
+				APIVersion: "v1",
+				FieldPath:  "metadata.name",
 			},
 		},
 	}, {
 		Name: "K_INTERNAL_POD_NAMESPACE",
 		ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{
-				FieldPath: "metadata.namespace",
+				APIVersion: "v1",
+				FieldPath:  "metadata.namespace",
 			},
 		},
 	}}
@@ -255,8 +287,12 @@ func buildUserPortEnv(userPort string) corev1.EnvVar {
 }
 
 // MakeDeployment constructs a K8s Deployment resource from a revision.
-func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, error) {
-	podSpec, err := makePodSpec(rev, cfg)
+func MakeDeployment(rev *v1.Revision, cfg *config.Config, previous *appsv1.Deployment) (*appsv1.Deployment, error) {
+	var previousPodSpec *corev1.PodSpec
+	if previous != nil {
+		previousPodSpec = &previous.Spec.Template.Spec
+	}
+	podSpec, err := makePodSpec(rev, cfg, previousPodSpec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PodSpec: %w", err)
 	}
@@ -274,7 +310,7 @@ func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, e
 
 	// Slowly but steadily roll the deployment out, to have the least possible impact.
 	maxUnavailable := intstr.FromInt(0)
-	return &appsv1.Deployment{
+	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            names.Deployment(rev),
 			Namespace:       rev.Namespace,
@@ -300,5 +336,15 @@ func MakeDeployment(rev *v1.Revision, cfg *config.Config) (*appsv1.Deployment, e
 				Spec: *podSpec,
 			},
 		},
-	}, nil
+	}
+
+	if previous != nil {
+		deployment.Spec.RevisionHistoryLimit = previous.Spec.RevisionHistoryLimit
+		deployment.Spec.Strategy.RollingUpdate.MaxSurge = previous.Spec.Strategy.RollingUpdate.MaxSurge
+
+		// Assumption: the template labels should not change because a change would mean a new revision
+		deployment.Spec.Template.ObjectMeta.Labels = previous.Spec.Template.ObjectMeta.Labels
+	}
+
+	return deployment, nil
 }

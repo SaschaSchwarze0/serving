@@ -152,6 +152,8 @@ func toControllerConstructors(namedCtors []injection.NamedControllerConstructor)
 // MainWithContext runs the generic main flow for controllers and
 // webhooks. Use MainWithContext if you do not need to serve webhooks.
 func MainWithContext(ctx context.Context, component string, ctors ...injection.ControllerConstructor) {
+	// SASCHA patched
+	flag.IntVar(&controller.DefaultThreadsPerController, "threads-per-controller", controller.DefaultThreadsPerController, "Threads (goroutines) to create per controller")
 
 	// TODO(mattmoor): Remove this once HA is stable.
 	disableHighAvailability := flag.Bool("disable-ha", false,
@@ -199,6 +201,8 @@ func MainWithConfig(ctx context.Context, component string, cfg *rest.Config, cto
 	if cfg.Burst == 0 {
 		cfg.Burst = len(ctors) * rest.DefaultBurst
 	}
+
+	log.Printf("SASCHA DEBUG Config: %v\n", cfg)
 
 	ctx, startInformers := injection.EnableInjectionOrDie(ctx, cfg)
 

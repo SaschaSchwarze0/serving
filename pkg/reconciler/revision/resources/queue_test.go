@@ -419,7 +419,7 @@ func TestMakeQueueContainer(t *testing.T) {
 					Features: &test.fc,
 				},
 			}
-			got, err := makeQueueContainer(test.rev, cfg)
+			got, err := makeQueueContainer(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makeQueueContainer returned error:", err)
 			}
@@ -554,7 +554,7 @@ func TestMakeQueueContainerWithPercentageAnnotation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := revConfig()
 			cfg.Deployment = &test.dc
-			got, err := makeQueueContainer(test.rev, cfg)
+			got, err := makeQueueContainer(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makeQueueContainer returned error:", err)
 			}
@@ -629,7 +629,7 @@ func TestProbeGenerationHTTPDefaults(t *testing.T) {
 		}
 	})
 
-	got, err := makeQueueContainer(rev, revConfig())
+	got, err := makeQueueContainer(rev, revConfig(), nil)
 	if err != nil {
 		t.Fatal("makeQueueContainer returned error")
 	}
@@ -705,7 +705,7 @@ func TestProbeGenerationHTTP(t *testing.T) {
 		}
 	})
 
-	got, err := makeQueueContainer(rev, revConfig())
+	got, err := makeQueueContainer(rev, revConfig(), nil)
 	if err != nil {
 		t.Fatal("makeQueueContainer returned error")
 	}
@@ -890,7 +890,7 @@ func TestTCPProbeGeneration(t *testing.T) {
 			config := revConfig()
 			config.Deployment = &test.dc
 
-			got, err := makeQueueContainer(testRev, config)
+			got, err := makeQueueContainer(testRev, config, nil)
 			if err != nil {
 				t.Fatal("makeQueueContainer returned error")
 			}

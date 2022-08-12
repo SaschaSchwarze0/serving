@@ -54,10 +54,12 @@ var (
 	queueHTTPPort = corev1.ContainerPort{
 		Name:          requestQueueHTTPPortName,
 		ContainerPort: networking.BackendHTTPPort,
+		Protocol:      corev1.ProtocolTCP,
 	}
 	queueHTTP2Port = corev1.ContainerPort{
 		Name:          requestQueueHTTPPortName,
 		ContainerPort: networking.BackendHTTP2Port,
+		Protocol:      corev1.ProtocolTCP,
 	}
 	queueHTTPSPort = corev1.ContainerPort{
 		Name:          requestQueueHTTPSPortName,
@@ -67,17 +69,21 @@ var (
 		// Provides health checks and lifecycle hooks.
 		Name:          v1.QueueAdminPortName,
 		ContainerPort: networking.QueueAdminPort,
+		Protocol:      corev1.ProtocolTCP,
 	}, {
 		Name:          v1.AutoscalingQueueMetricsPortName,
 		ContainerPort: networking.AutoscalingQueueMetricsPort,
+		Protocol:      corev1.ProtocolTCP,
 	}, {
 		Name:          v1.UserQueueMetricsPortName,
 		ContainerPort: networking.UserQueueMetricsPort,
+		Protocol:      corev1.ProtocolTCP,
 	}}
 
 	profilingPort = corev1.ContainerPort{
 		Name:          profilingPortName,
 		ContainerPort: profiling.ProfilingPort,
+		Protocol:      corev1.ProtocolTCP,
 	}
 
 	queueSecurityContext = &corev1.SecurityContext{
@@ -180,7 +186,7 @@ func fractionFromPercentage(m map[string]string, key kmap.KeyPriority) (float64,
 }
 
 // makeQueueContainer creates the container spec for the queue sidecar.
-func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container, error) {
+func makeQueueContainer(rev *v1.Revision, cfg *config.Config, previous *corev1.Container) (*corev1.Container, error) {
 	configName := ""
 	if owner := metav1.GetControllerOf(rev); owner != nil && owner.Kind == "Configuration" {
 		configName = owner.Name
@@ -250,7 +256,9 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 		httpProbe = container.ReadinessProbe.DeepCopy()
 		httpProbe.ProbeHandler = corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Port: intstr.FromInt(int(servingPort.ContainerPort)),
+				Port:   intstr.FromInt(int(servingPort.ContainerPort)),
+				Path:   "/",
+				Scheme: "HTTP",
 				HTTPHeaders: []corev1.HTTPHeader{{
 					Name:  netheader.ProbeKey,
 					Value: queue.Name,
@@ -301,14 +309,16 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 			Name: "SERVING_POD",
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.name",
+					APIVersion: "v1",
+					FieldPath:  "metadata.name",
 				},
 			},
 		}, {
 			Name: "SERVING_POD_IP",
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "status.podIP",
+					APIVersion: "v1",
+					FieldPath:  "status.podIP",
 				},
 			},
 		}, {
@@ -377,6 +387,12 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 			Name:  "ENABLE_HTTP2_AUTO_DETECTION",
 			Value: strconv.FormatBool(cfg.Features.AutoDetectHTTP2 == apicfg.Enabled),
 		}},
+	}
+
+	if previous != nil {
+		c.ImagePullPolicy = previous.ImagePullPolicy
+		c.TerminationMessagePath = previous.TerminationMessagePath
+		c.TerminationMessagePolicy = previous.TerminationMessagePolicy
 	}
 
 	return c, nil

@@ -155,6 +155,11 @@ func (*RevisionSpec) applyProbes(container *corev1.Container) {
 		if container.ReadinessProbe.TimeoutSeconds == 0 {
 			container.ReadinessProbe.TimeoutSeconds = 1
 		}
+	} else {
+		// TODO I do not understand above logic, why implies PeriodSeconds the other two values ?
+		container.ReadinessProbe.PeriodSeconds = 10
+		container.ReadinessProbe.FailureThreshold = 3
+		container.ReadinessProbe.TimeoutSeconds = 1
 	}
 }
 

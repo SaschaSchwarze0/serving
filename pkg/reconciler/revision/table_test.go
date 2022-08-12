@@ -810,7 +810,7 @@ func deploy(t *testing.T, namespace, name string, opts ...interface{}) *appsv1.D
 	// Do this here instead of in `rev` itself to ensure that we populate defaults
 	// before calling MakeDeployment within Reconcile.
 	rev.SetDefaults(context.Background())
-	deployment, err := resources.MakeDeployment(rev, cfg)
+	deployment, err := resources.MakeDeployment(rev, cfg, nil)
 	if err != nil {
 		t.Fatal("failed to create deployment")
 	}

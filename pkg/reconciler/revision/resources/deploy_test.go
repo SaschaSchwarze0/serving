@@ -1308,7 +1308,7 @@ func TestMakePodSpec(t *testing.T) {
 			if test.defaults != nil {
 				cfg.Defaults = test.defaults
 			}
-			got, err := makePodSpec(test.rev, cfg)
+			got, err := makePodSpec(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makePodSpec returned error:", err)
 			}
@@ -1494,7 +1494,7 @@ func TestMakeDeployment(t *testing.T) {
 			cfg := revConfig()
 			cfg.Autoscaler = ac
 			cfg.Deployment = &test.dc
-			podSpec, err := makePodSpec(test.rev, cfg)
+			podSpec, err := makePodSpec(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makePodSpec returned error:", err)
 			}
@@ -1502,7 +1502,7 @@ func TestMakeDeployment(t *testing.T) {
 				test.want.Spec.Template.Spec = *podSpec
 			}
 			// Copy to override
-			got, err := MakeDeployment(test.rev, cfg)
+			got, err := MakeDeployment(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("Got unexpected error:", err)
 			}

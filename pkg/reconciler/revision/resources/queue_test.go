@@ -393,7 +393,7 @@ func TestMakeQueueContainer(t *testing.T) {
 					Features: &test.fc,
 				},
 			}
-			got, err := makeQueueContainer(test.rev, cfg)
+			got, err := makeQueueContainer(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makeQueueContainer returned error:", err)
 			}
@@ -528,7 +528,7 @@ func TestMakeQueueContainerWithPercentageAnnotation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cfg := revConfig()
 			cfg.Deployment = &test.dc
-			got, err := makeQueueContainer(test.rev, cfg)
+			got, err := makeQueueContainer(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makeQueueContainer returned error:", err)
 			}
@@ -598,12 +598,14 @@ func TestProbeGenerationHTTPDefaults(t *testing.T) {
 					}},
 				},
 			},
-			PeriodSeconds:  1,
-			TimeoutSeconds: 10,
+			PeriodSeconds:    1,
+			TimeoutSeconds:   10,
+			SuccessThreshold: 1,
+			FailureThreshold: 3,
 		}
 	})
 
-	got, err := makeQueueContainer(rev, revConfig())
+	got, err := makeQueueContainer(rev, revConfig(), nil)
 	if err != nil {
 		t.Fatal("makeQueueContainer returned error")
 	}
@@ -674,12 +676,14 @@ func TestProbeGenerationHTTP(t *testing.T) {
 					}},
 				},
 			},
-			PeriodSeconds:  2,
-			TimeoutSeconds: 10,
+			PeriodSeconds:    2,
+			TimeoutSeconds:   10,
+			SuccessThreshold: 1,
+			FailureThreshold: 3,
 		}
 	})
 
-	got, err := makeQueueContainer(rev, revConfig())
+	got, err := makeQueueContainer(rev, revConfig(), nil)
 	if err != nil {
 		t.Fatal("makeQueueContainer returned error")
 	}
@@ -741,8 +745,9 @@ func TestTCPProbeGeneration(t *testing.T) {
 						}},
 					},
 				},
-				PeriodSeconds:    0,
-				TimeoutSeconds:   0,
+				PeriodSeconds:    10,
+				TimeoutSeconds:   1,
+				FailureThreshold: 3,
 				SuccessThreshold: 3,
 			}
 			c.Env = env(map[string]string{"USER_PORT": strconv.Itoa(userPort)})
@@ -784,9 +789,10 @@ func TestTCPProbeGeneration(t *testing.T) {
 						}},
 					},
 				},
-				PeriodSeconds: 1,
-				// Inherit Kubernetes default here rather than overriding as we need to do for exec probe.
-				TimeoutSeconds: 0,
+				PeriodSeconds:    1,
+				TimeoutSeconds:   1,
+				SuccessThreshold: 1,
+				FailureThreshold: 3,
 			}
 			c.Env = env(map[string]string{})
 		}),
@@ -864,7 +870,7 @@ func TestTCPProbeGeneration(t *testing.T) {
 			config := revConfig()
 			config.Deployment = &test.dc
 
-			got, err := makeQueueContainer(testRev, config)
+			got, err := makeQueueContainer(testRev, config, nil)
 			if err != nil {
 				t.Fatal("makeQueueContainer returned error")
 			}
@@ -941,7 +947,7 @@ func env(overrides map[string]string) []corev1.EnvVar {
 	}, {
 		Name: "HOST_IP",
 		ValueFrom: &corev1.EnvVarSource{
-			FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "status.hostIP"},
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.hostIP"},
 		},
 	}, {
 		Name: "SERVING_POD_IP",

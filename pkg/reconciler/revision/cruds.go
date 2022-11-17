@@ -39,7 +39,7 @@ import (
 func (c *Reconciler) createDeployment(ctx context.Context, rev *v1.Revision) (*appsv1.Deployment, error) {
 	cfgs := config.FromContext(ctx)
 
-	deployment, err := resources.MakeDeployment(rev, cfgs)
+	deployment, err := resources.MakeDeployment(rev, cfgs, nil)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to make deployment: %w", err)
@@ -66,7 +66,7 @@ func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revis
 	logger := logging.FromContext(ctx)
 	cfgs := config.FromContext(ctx)
 
-	deployment, err := resources.MakeDeployment(rev, cfgs)
+	deployment, err := resources.MakeDeployment(rev, cfgs, have)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update deployment: %w", err)
 	}
@@ -80,6 +80,7 @@ func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revis
 
 	// If the spec we want is the spec we have, then we're good.
 	if equality.Semantic.DeepEqual(have.Spec, deployment.Spec) {
+		logger.Infof("Not updating deployment %s/%s because of an empty diff\n", deployment.Namespace, deployment.Name)
 		return have, nil
 	}
 
@@ -89,6 +90,12 @@ func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revis
 
 	// Carry over new labels.
 	desiredDeployment.Labels = kmeta.UnionMaps(deployment.Labels, desiredDeployment.Labels)
+
+	debugDiffs, err := kmp.SafeDiff(have.Spec, desiredDeployment.Spec)
+	if err != nil {
+		return nil, err
+	}
+	logger.Infof("Updating deployment %s/%s with diff\n", deployment.Namespace, deployment.Name, debugDiffs)
 
 	d, err := c.kubeclient.AppsV1().Deployments(deployment.Namespace).Update(ctx, desiredDeployment, metav1.UpdateOptions{})
 	if err != nil {

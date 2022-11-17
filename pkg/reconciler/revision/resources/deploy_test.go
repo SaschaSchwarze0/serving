@@ -86,7 +86,10 @@ var (
 					}},
 				},
 			},
-			PeriodSeconds: 0,
+			PeriodSeconds:    10,
+			TimeoutSeconds:   1,
+			SuccessThreshold: 1,
+			FailureThreshold: 3,
 		},
 		SecurityContext: queueSecurityContext,
 		Env: []corev1.EnvVar{{
@@ -179,7 +182,7 @@ var (
 		}, {
 			Name: "HOST_IP",
 			ValueFrom: &corev1.EnvVarSource{
-				FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "status.hostIP"},
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.hostIP"},
 			},
 		}, {
 			Name:  "ENABLE_HTTP2_AUTO_DETECTION",
@@ -1158,7 +1161,7 @@ func TestMakePodSpec(t *testing.T) {
 			if test.defaults != nil {
 				cfg.Defaults = test.defaults
 			}
-			got, err := makePodSpec(test.rev, cfg)
+			got, err := makePodSpec(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makePodSpec returned error:", err)
 			}
@@ -1344,7 +1347,7 @@ func TestMakeDeployment(t *testing.T) {
 			cfg := revConfig()
 			cfg.Autoscaler = ac
 			cfg.Deployment = &test.dc
-			podSpec, err := makePodSpec(test.rev, cfg)
+			podSpec, err := makePodSpec(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("makePodSpec returned error:", err)
 			}
@@ -1352,7 +1355,7 @@ func TestMakeDeployment(t *testing.T) {
 				test.want.Spec.Template.Spec = *podSpec
 			}
 			// Copy to override
-			got, err := MakeDeployment(test.rev, cfg)
+			got, err := MakeDeployment(test.rev, cfg, nil)
 			if err != nil {
 				t.Fatal("Got unexpected error:", err)
 			}

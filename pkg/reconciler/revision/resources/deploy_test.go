@@ -1356,6 +1356,10 @@ func TestMakeDeployment(t *testing.T) {
 			if err != nil {
 				t.Fatal("Got unexpected error:", err)
 			}
+			if got.Annotations["serving.knative.dev/deployment-spec-hash"] == "" {
+				t.Errorf("Response from MakeDeployment misses deployment spec hash")
+			}
+			delete(got.Annotations, "serving.knative.dev/deployment-spec-hash")
 			if diff := cmp.Diff(test.want, got, quantityComparer); diff != "" {
 				t.Errorf("MakeDeployment (-want, +got) =\n%s", diff)
 			}

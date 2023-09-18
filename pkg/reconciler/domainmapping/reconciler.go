@@ -300,11 +300,22 @@ func (r *Reconciler) resolveRef(ctx context.Context, dm *v1beta1.DomainMapping) 
 	// TODO(julz) in the future we may support addressables that are not created
 	// from Services, in which case we would need to dynamically create the
 	// an ExternalName Service for the KIngress to use.
-	requiredSuffix := ".svc." + network.GetClusterDomainName()
-	parts := strings.Split(strings.TrimSuffix(resolved.Host, requiredSuffix), ".")
-	if !strings.HasSuffix(resolved.Host, requiredSuffix) || len(parts) != 2 {
-		dm.Status.MarkReferenceNotResolved(fmt.Sprintf("resolved URI %q must be of the form {name}.{namespace}%s", resolved, requiredSuffix))
-		return "", "", fmt.Errorf("resolved URI %q must be of the form {name}.{namespace}%s", resolved, requiredSuffix)
+	requiredSuffixes := []string{
+		".function." + network.GetClusterDomainName(),
+		".svc." + network.GetClusterDomainName(),
+	}
+	found := false
+	var parts []string
+	for _, requiredSuffix := range requiredSuffixes {
+		if strings.HasSuffix(resolved.Host, requiredSuffix) {
+			found = true
+			parts = strings.Split(strings.TrimSuffix(resolved.Host, requiredSuffix), ".")
+			break
+		}
+	}
+	if !found {
+		dm.Status.MarkReferenceNotResolved(fmt.Sprintf("resolved URI %q must be of the form {name}.{namespace}%s", resolved, requiredSuffixes[1]))
+		return "", "", fmt.Errorf("resolved URI %q must be of the form {name}.{namespace}%s", resolved, requiredSuffixes[1])
 	}
 
 	// If the namespace part of the target isn't the same as the DomainMapping

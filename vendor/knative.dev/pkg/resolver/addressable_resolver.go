@@ -238,6 +238,19 @@ func (r *URIResolver) addressableFromDestinationRef(ctx context.Context, dest du
 		}, nil
 	}
 
+	if dest.Ref.APIVersion == "codeengine.cloud.ibm.com/v1beta1" && dest.Ref.Kind == "Function" {
+		url := &apis.URL{
+			Scheme: "http",
+			Host:   fmt.Sprintf("%s.%s.function.cluster.local", dest.Ref.Name, dest.Ref.Namespace),
+			Path:   "",
+		}
+
+		return &duckv1.Addressable{
+			Name: dest.Ref.Address,
+			URL:  url,
+		}, nil
+	}
+
 	addressable, ok := obj.(*duckv1.AddressableType)
 	if !ok {
 		return nil, apierrs.NewBadRequest(fmt.Sprintf("%s(%T) is not an AddressableType", dest.Ref, dest.Ref))

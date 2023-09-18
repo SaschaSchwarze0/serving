@@ -19,7 +19,12 @@ package revision
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
+	"os"
+	"strconv"
 
+	"golang.org/x/time/rate"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -35,6 +40,34 @@ import (
 	"knative.dev/serving/pkg/reconciler/revision/config"
 	"knative.dev/serving/pkg/reconciler/revision/resources"
 )
+
+var (
+	deploymentUpdatesLimiter *rate.Limiter
+)
+
+func init() {
+	deploymentUpdatesMaxPerTimeSlice := 0
+	deploymentUpdatesTimeSliceDurationSeconds := 0.0
+
+	var err error
+	if value, found := os.LookupEnv("DEPLOYMENT_UPDATES_TIME_SLICE_DURATION_SECONDS"); found {
+		if deploymentUpdatesTimeSliceDurationSeconds, err = strconv.ParseFloat(value, 64); err != nil {
+			log.Fatalf("Non-numeric value for DEPLOYMENT_UPDATES_TIME_SLICE_DURATION_SECONDS: %s", value)
+		}
+	}
+
+	if value, found := os.LookupEnv("DEPLOYMENT_UPDATES_MAX_PER_TIME_SLICE"); found {
+		if deploymentUpdatesMaxPerTimeSlice, err = strconv.Atoi(value); err != nil {
+			log.Fatalf("Non-numeric value for DEPLOYMENT_UPDATES_MAX_PER_TIME_SLICE: %s", value)
+		}
+	}
+
+	if deploymentUpdatesMaxPerTimeSlice != 0 && deploymentUpdatesTimeSliceDurationSeconds != 0.0 {
+		deploymentUpdatesLimiter = rate.NewLimiter(rate.Limit(float64(deploymentUpdatesMaxPerTimeSlice)/deploymentUpdatesTimeSliceDurationSeconds), deploymentUpdatesMaxPerTimeSlice)
+	} else {
+		deploymentUpdatesLimiter = rate.NewLimiter(rate.Inf, math.MaxInt)
+	}
+}
 
 func (c *Reconciler) createDeployment(ctx context.Context, rev *v1.Revision) (*appsv1.Deployment, error) {
 	cfgs := config.FromContext(ctx)
@@ -63,19 +96,24 @@ func (c *Reconciler) createSecret(ctx context.Context, ns *corev1.Namespace) (*c
 	return c.kubeclient.CoreV1().Secrets(secret.Namespace).Create(ctx, secret, metav1.CreateOptions{})
 }
 
-func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revision, have *appsv1.Deployment) (*appsv1.Deployment, error) {
+func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revision, have *appsv1.Deployment) (*appsv1.Deployment, bool, error) {
 	logger := logging.FromContext(ctx)
 	cfgs := config.FromContext(ctx)
 
 	deployment, err := resources.MakeDeployment(rev, cfgs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update deployment: %w", err)
+		return nil, false, fmt.Errorf("failed to update deployment: %w", err)
 	}
 
 	// Check if the hash matches what we currently have in the system
 	if deployment.Annotations["serving.knative.dev/deployment-spec-hash"] == have.Annotations["serving.knative.dev/deployment-spec-hash"] {
 		logger.Infof("Not updating deployment %s/%s because of an empty diff\n", deployment.Namespace, deployment.Name)
-		return have, nil
+		return have, false, nil
+	}
+
+	if *have.Spec.Replicas > 0 && !deploymentUpdatesLimiter.Allow() {
+		logger.Infof("Not updating deployment %s/%s now because of too many concurrent deployment updates\n", deployment.Namespace, deployment.Name)
+		return nil, true, nil
 	}
 
 	// Preserve the current scale of the Deployment.
@@ -97,22 +135,22 @@ func (c *Reconciler) checkAndUpdateDeployment(ctx context.Context, rev *v1.Revis
 
 	d, err := c.kubeclient.AppsV1().Deployments(deployment.Namespace).Update(ctx, desiredDeployment, metav1.UpdateOptions{})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// If what comes back from the update (with defaults applied by the API server) is the same
 	// as what we have then nothing changed.
 	if equality.Semantic.DeepEqual(have.Spec, d.Spec) {
-		return d, nil
+		return d, false, nil
 	}
 	diff, err := kmp.SafeDiff(have.Spec, d.Spec)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	// If what comes back has a different spec, then signal the change.
 	logger.Info("Reconciled deployment diff (-desired, +observed): ", diff)
-	return d, nil
+	return d, false, nil
 }
 
 func (c *Reconciler) createImageCache(ctx context.Context, rev *v1.Revision, containerName, imageDigest string) (*caching.Image, error) {

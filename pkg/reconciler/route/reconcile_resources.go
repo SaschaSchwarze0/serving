@@ -260,9 +260,10 @@ func (c *Reconciler) updatePlaceholderServices(ctx context.Context, route *v1.Ro
 
 			if canUpdate {
 				// Make sure that the service has the proper specification.
-				if !equality.Semantic.DeepEqual(from.Service.Spec, to.Service.Spec) {
+				if !equality.Semantic.DeepEqual(from.Service.Spec, to.Service.Spec) || from.Service.Annotations["networking.istio.io/exportTo"] != to.Service.Annotations["networking.istio.io/exportTo"] {
 					// Don't modify the informers copy.
 					existing := from.Service.DeepCopy()
+					existing.Annotations = to.Service.Annotations
 					existing.Spec = to.Service.Spec
 					if _, err := c.kubeclient.CoreV1().Services(ns).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 						return err

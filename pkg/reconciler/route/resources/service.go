@@ -19,6 +19,7 @@ package resources
 import (
 	"context"
 	"errors"
+	"os"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +32,12 @@ import (
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
 	"knative.dev/serving/pkg/reconciler/route/domains"
 )
+
+var publicServiceIstioExportTo string
+
+func init() {
+	publicServiceIstioExportTo = os.Getenv("PUBLIC_SERVICE_ISTIO_EXPORT_TO")
+}
 
 type ServicePair struct {
 	*corev1.Service
@@ -161,6 +168,12 @@ func MakeK8sService(ctx context.Context, route *v1.Route, tagName string, ingres
 }
 
 func makeServiceObjectMeta(hostname string, route *v1.Route) metav1.ObjectMeta {
+	svcAnnos := route.GetAnnotations()
+	if publicServiceIstioExportTo != "" {
+		svcAnnos = kmeta.CopyMap(route.GetAnnotations())
+		svcAnnos["networking.istio.io/exportTo"] = publicServiceIstioExportTo
+	}
+
 	svcLabels := map[string]string{
 		serving.RouteLabelKey: route.Name,
 	}
@@ -177,6 +190,6 @@ func makeServiceObjectMeta(hostname string, route *v1.Route) metav1.ObjectMeta {
 			// in the specific k8s svc for subroute. see https://github.com/knative/serving/pull/4560.
 			return key == netapi.VisibilityLabelKey
 		}), svcLabels),
-		Annotations: route.GetAnnotations(),
+		Annotations: svcAnnos,
 	}
 }

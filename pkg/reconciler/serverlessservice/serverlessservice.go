@@ -113,8 +113,9 @@ func (r *reconciler) reconcilePublicService(ctx context.Context, sks *netv1alpha
 		want := srv.DeepCopy()
 		want.Spec.Ports = tmpl.Spec.Ports
 		want.Spec.Selector = nil
+		want.Annotations["networking.istio.io/exportTo"] = ".,istio-system,knative-eventing,knative-sources"
 
-		if !equality.Semantic.DeepEqual(want.Spec, srv.Spec) {
+		if !equality.Semantic.DeepEqual(want.Spec, srv.Spec) || want.Annotations["networking.istio.io/exportTo"] != srv.Annotations["networking.istio.io/exportTo"] {
 			logger.Info("Public K8s Service changed; reconciling: ", sn, cmp.Diff(want.Spec, srv.Spec))
 			if _, err = r.kubeclient.CoreV1().Services(sks.Namespace).Update(ctx, want, metav1.UpdateOptions{}); err != nil {
 				return fmt.Errorf("failed to update public K8s Service: %w", err)
@@ -332,6 +333,7 @@ func (r *reconciler) reconcilePrivateService(ctx context.Context, sks *netv1alph
 		// Our controller manages only part of spec, so set the fields we own.
 		want.Spec.Ports = tmpl.Spec.Ports
 		want.Spec.Selector = tmpl.Spec.Selector
+		want.Annotations["networking.istio.io/exportTo"] = "knative-serving"
 
 		if !equality.Semantic.DeepEqual(svc.Spec, want.Spec) {
 			// Spec has only public fields and cmp can't panic here.

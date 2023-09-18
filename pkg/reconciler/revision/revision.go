@@ -119,6 +119,51 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, rev *v1.Revision) pkgrec
 	readyBeforeReconcile := rev.IsReady()
 	c.updateRevisionLoggingURL(ctx, rev)
 
+	// IBM Patch: Exit if 'pause' or 'fail' label is there.
+	// We use a label instead of an annotation so we can quickly find it.
+	// The format of the label should be:
+	//    codeengine.cloud.ibm.com/pause-REASON: DATA
+	//    codeengine.cloud.ibm.com/fail-REASON: DATA
+	// where REASON should be the high level reason for the pause (e.g. "build"
+	// to mean we're waiting for a build to complete). DATA is an instance
+	// specific piece of metadata about what we're waiting for (e.g.
+	// a buildrun name or UID).
+	// Watch for the need to wait for multiple instances of a resource.
+	// For example, watching for multiple service bindings. In this case
+	// the REASON will probably need service binding instance specific
+	// data to avoid a name conflict. Technically, the code here does not
+	// care what REASON and DATA are, it's really up to the code that will
+	// set/look for these labels, so that code can decide these details.
+	failLabels := []string{}
+	hasPauseLabels := false
+	for name := range rev.Labels {
+		if strings.HasPrefix(name, "codeengine.cloud.ibm.com/fail-") {
+			failLabels = append(failLabels, name)
+		}
+
+		if strings.HasPrefix(name, "codeengine.cloud.ibm.com/pause-") {
+			hasPauseLabels = true
+		}
+	}
+
+	if len(failLabels) > 0 {
+		var messageBuilder strings.Builder
+		for i, label := range failLabels {
+			messageBuilder.WriteString(rev.Labels[label])
+			if i < len(failLabels)-1 {
+				messageBuilder.WriteString("; ")
+			}
+		}
+
+		rev.Status.MarkResourcesAvailableFalse("Codeengine-Failure", messageBuilder.String())
+		return nil
+	}
+
+	if hasPauseLabels {
+		rev.Status.MarkResourcesAvailableUnknown("Paused", "")
+		return nil
+	}
+
 	reconciled, err := c.reconcileDigest(ctx, rev)
 	if err != nil {
 		return err

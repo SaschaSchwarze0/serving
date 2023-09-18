@@ -40,6 +40,8 @@ func targetPort(sks *v1alpha1.ServerlessService) intstr.IntOrString {
 // MakePublicService constructs a K8s Service that is not backed a selector
 // and will be manually reconciled by the SKS controller.
 func MakePublicService(sks *v1alpha1.ServerlessService) *corev1.Service {
+	sksAnno := kmeta.CopyMap(sks.GetAnnotations())
+	sksAnno["networking.istio.io/exportTo"] = ".,istio-system"
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sks.Name,
@@ -49,7 +51,7 @@ func MakePublicService(sks *v1alpha1.ServerlessService) *corev1.Service {
 				networking.SKSLabelKey:    sks.Name,
 				networking.ServiceTypeKey: string(networking.ServiceTypePublic),
 			}),
-			Annotations:     kmeta.CopyMap(sks.GetAnnotations()),
+			Annotations:     sksAnno,
 			OwnerReferences: []metav1.OwnerReference{*kmeta.NewControllerRef(sks)},
 		},
 		Spec: corev1.ServiceSpec{
@@ -64,14 +66,6 @@ func makePublicServicePorts(sks *v1alpha1.ServerlessService) []corev1.ServicePor
 		Protocol:   corev1.ProtocolTCP,
 		Port:       int32(pkgnet.ServicePort(sks.Spec.ProtocolType)),
 		TargetPort: targetPort(sks),
-	}, {
-		// The HTTPS port is used when activator-ca is enabled.
-		// Although it is not used by default, we put it here as it should be harmless
-		// and makes the code simple.
-		Name:       pkgnet.ServicePortNameHTTPS,
-		Protocol:   corev1.ProtocolTCP,
-		Port:       pkgnet.ServiceHTTPSPort,
-		TargetPort: intstr.FromInt(networking.BackendHTTPSPort),
 	}}
 	return ports
 }
@@ -130,6 +124,8 @@ func filterSubsetPorts(targetPort int32, subsets []corev1.EndpointSubset) []core
 // MakePrivateService constructs a K8s service, that is backed by the pod selector
 // matching pods created by the revision.
 func MakePrivateService(sks *v1alpha1.ServerlessService, selector map[string]string) *corev1.Service {
+	sksAnno := kmeta.CopyMap(sks.GetAnnotations())
+	sksAnno["networking.istio.io/exportTo"] = "knative-serving"
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      names.PrivateService(sks.Name),
@@ -139,7 +135,7 @@ func MakePrivateService(sks *v1alpha1.ServerlessService, selector map[string]str
 				networking.SKSLabelKey:    sks.Name,
 				networking.ServiceTypeKey: string(networking.ServiceTypePrivate),
 			}),
-			Annotations:     kmeta.CopyMap(sks.GetAnnotations()),
+			Annotations:     sksAnno,
 			OwnerReferences: []metav1.OwnerReference{*kmeta.NewControllerRef(sks)},
 		},
 		Spec: corev1.ServiceSpec{
@@ -150,11 +146,6 @@ func MakePrivateService(sks *v1alpha1.ServerlessService, selector map[string]str
 				// This one is matching the public one, since this is the
 				// port queue-proxy listens on.
 				TargetPort: targetPort(sks),
-			}, {
-				Name:       pkgnet.ServicePortNameHTTPS,
-				Protocol:   corev1.ProtocolTCP,
-				Port:       pkgnet.ServiceHTTPSPort,
-				TargetPort: intstr.FromInt(networking.BackendHTTPSPort),
 			}, {
 				Name:       servingv1.AutoscalingQueueMetricsPortName,
 				Protocol:   corev1.ProtocolTCP,
@@ -177,14 +168,6 @@ func MakePrivateService(sks *v1alpha1.ServerlessService, selector map[string]str
 				Protocol:   corev1.ProtocolTCP,
 				Port:       networking.QueueAdminPort,
 				TargetPort: intstr.FromInt(networking.QueueAdminPort),
-			}, {
-				// When run with the Istio mesh and with the pod-addressability feature
-				// enabled, this mirrors the target port to the "outer" service port to
-				// instruct Istio to open the respective listener on the pod.
-				Name:       pkgnet.ServicePortName(sks.Spec.ProtocolType) + "-istio",
-				Protocol:   corev1.ProtocolTCP,
-				Port:       targetPort(sks).IntVal,
-				TargetPort: targetPort(sks),
 			}},
 			Selector: selector,
 		},

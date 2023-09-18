@@ -151,6 +151,11 @@ func (c *Reconciler) reconcilePA(ctx context.Context, rev *v1.Revision) error {
 
 	pa, err := c.podAutoscalerLister.PodAutoscalers(ns).Get(paName)
 	if apierrs.IsNotFound(err) {
+		if isReservedRoutingState(rev) && isRevisionStateFinal(rev) {
+			logger.Info("Revision is not receiving traffic: ", rev)
+			rev.Status.MarkActiveFalse("PodAutoscalerUnavailable", "Revision is not active.")
+			return nil
+		}
 		// PA does not exist. Create it.
 		pa, err = c.createPA(ctx, rev)
 		if err != nil {
@@ -182,7 +187,42 @@ func (c *Reconciler) reconcilePA(ctx context.Context, rev *v1.Revision) error {
 
 	logger.Debugf("Observed PA Status=%#v", pa.Status)
 	rev.Status.PropagateAutoscalerStatus(&pa.Status)
+	// propagate the PA status before removing the PA so that the autoscaler can scale down the revision
+	if isReservedRoutingState(rev) && isRevisionStateFinal(rev) {
+		logger.Info("Revision is not receiving traffic: ", rev)
+		// we want to remove the PA in order to remove ServerlessService and k8s services through its ownership relation
+		deploymentName := resourcenames.Deployment(rev)
+		deployment, getDeploymentErr := c.deploymentLister.Deployments(ns).Get(deploymentName)
+		if getDeploymentErr != nil {
+			return getDeploymentErr
+		}
+		// we need to check if the deployment is still up in order to be able to scale it down, before we remove the PA
+		if *deployment.Spec.Replicas == 0 && deployment.Status.AvailableReplicas == 0 {
+			err := c.client.AutoscalingV1alpha1().PodAutoscalers(ns).Delete(ctx, paName, metav1.DeleteOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to delete PA %q: %w", paName, err)
+			}
+			logger.Info("Deleted PA: ", paName)
+			rev.Status.MarkActiveFalse("PodAutoscalerUnavailable", "Revision is not active.")
+			return nil
+		}
+		logger.Info("Do not delete PA before all pods are gone: ", paName)
+		return fmt.Errorf("Pods not deleted yet %q", paName)
+	}
 	return nil
+}
+
+func isReservedRoutingState(rev *v1.Revision) bool {
+	value, found := rev.Labels["serving.knative.dev/routingState"]
+	if !found {
+		return false
+	} else {
+		return value == "reserve"
+	}
+}
+
+func isRevisionStateFinal(rev *v1.Revision) bool {
+	return rev.IsReady() || rev.IsFailed()
 }
 
 func hasDeploymentTimedOut(deployment *appsv1.Deployment) bool {

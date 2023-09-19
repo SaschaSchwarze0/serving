@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgotesting "k8s.io/client-go/testing"
 	clocktest "k8s.io/utils/clock/testing"
+	"k8s.io/utils/pointer"
 
 	caching "knative.dev/caching/pkg/apis/caching/v1alpha1"
 	cachingclient "knative.dev/caching/pkg/client/injection/client"
@@ -53,6 +54,16 @@ import (
 	. "knative.dev/serving/pkg/testing"
 	. "knative.dev/serving/pkg/testing/v1"
 )
+
+type deploymentOption func(*appsv1.Deployment)
+
+// WithReplicas configures the number of replicas on the Deployment
+func WithReplicas(replicas int32) deploymentOption {
+	return func(d *appsv1.Deployment) {
+		d.Spec.Replicas = pointer.Int32(replicas)
+		d.Status.AvailableReplicas = replicas
+	}
+}
 
 // This is heavily based on the way the OpenShift Ingress controller tests its reconciliation method.
 func TestReconcile(t *testing.T) {
@@ -237,15 +248,15 @@ func TestReconcile(t *testing.T) {
 		// Test a simple stable reconciliation of an inactive Revision.
 		// We feed in a Revision and the resources it controls in a steady
 		// state (port-Reserve), and verify that no changes are necessary.
+		// CE: we deleted the PodAutoscaler and therefore don't have it in
+		// the list of objects here, we also changed the reason of the revision
+		// to PodAutoscalerUnavailable / Revision is not active.
 		Objects: []runtime.Object{
 			Revision("foo", "stable-deactivation",
 				WithLogURL, MarkRevisionReady,
-				MarkInactive("NoTraffic", "This thing is inactive."),
+				MarkInactive("PodAutoscalerUnavailable", "Revision is not active."),
 				WithRoutingState(v1.RoutingStateReserve, fc),
 				withDefaultContainerStatuses(), WithRevisionObservedGeneration(1)),
-			pa("foo", "stable-deactivation",
-				WithNoTraffic("NoTraffic", "This thing is inactive."), WithReachabilityUnreachable,
-				WithScaleTargetInitialized),
 			deploy(t, "foo", "stable-deactivation"),
 			image("foo", "stable-deactivation"),
 		},
@@ -300,6 +311,7 @@ func TestReconcile(t *testing.T) {
 	}, {
 		Name: "pa inactive",
 		// Test propagating the inactivity signal from the pa to the Revision.
+		// CE: we delete the PodAutoscaler of an inactive revision when the deployment is scaled to 0.
 		Objects: []runtime.Object{
 			Revision("foo", "pa-inactive",
 				WithLogURL,
@@ -309,9 +321,17 @@ func TestReconcile(t *testing.T) {
 				WithNoTraffic("NoTraffic", "This thing is inactive."),
 				WithScaleTargetInitialized,
 				WithReachabilityUnreachable),
-			readyDeploy(deploy(t, "foo", "pa-inactive")),
+			readyDeploy(deploy(t, "foo", "pa-inactive", WithReplicas(0))),
 			image("foo", "pa-inactive"),
 		},
+		WantDeletes: []clientgotesting.DeleteActionImpl{{
+			ActionImpl: clientgotesting.ActionImpl{
+				Namespace: "foo",
+				Verb:      "delete",
+				Resource:  autoscalingv1alpha1.SchemeGroupVersion.WithResource("podautoscalers"),
+			},
+			Name: "pa-inactive",
+		}},
 		WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
 			Object: Revision("foo", "pa-inactive",
 				WithLogURL, MarkRevisionReady, withDefaultContainerStatuses(),
@@ -319,7 +339,7 @@ func TestReconcile(t *testing.T) {
 
 				// When we reconcile an "all ready" revision when the PA
 				// is inactive, we should see the following change.
-				MarkInactive("NoTraffic", "This thing is inactive."), WithRevisionObservedGeneration(1)),
+				MarkInactive("PodAutoscalerUnavailable", "Revision is not active."), WithRevisionObservedGeneration(1)),
 		}},
 		Key: "foo/pa-inactive",
 	}, {
@@ -368,6 +388,7 @@ func TestReconcile(t *testing.T) {
 		Name: "pa inactive, but has service",
 		// Test propagating the inactivity signal from the pa to the Revision.
 		// But propagate the service name.
+		// CE: we delete the PodAutoscaler of an inactive revision when the deployment is scaled to 0.
 		Objects: []runtime.Object{
 			Revision("foo", "pa-inactive",
 				WithLogURL, MarkRevisionReady,
@@ -378,16 +399,24 @@ func TestReconcile(t *testing.T) {
 				WithPAStatusService("pa-inactive-svc"),
 				WithScaleTargetInitialized,
 				WithReachabilityUnreachable),
-			readyDeploy(deploy(t, "foo", "pa-inactive")),
+			readyDeploy(deploy(t, "foo", "pa-inactive", WithReplicas(0))),
 			image("foo", "pa-inactive"),
 		},
+		WantDeletes: []clientgotesting.DeleteActionImpl{{
+			ActionImpl: clientgotesting.ActionImpl{
+				Namespace: "foo",
+				Verb:      "delete",
+				Resource:  autoscalingv1alpha1.SchemeGroupVersion.WithResource("podautoscalers"),
+			},
+			Name: "pa-inactive",
+		}},
 		WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
 			Object: Revision("foo", "pa-inactive",
 				WithLogURL, MarkRevisionReady,
 				WithRoutingState(v1.RoutingStateReserve, fc),
 				// When we reconcile an "all ready" revision when the PA
 				// is inactive, we should see the following change.
-				MarkInactive("NoTraffic", "This thing is inactive."),
+				MarkInactive("PodAutoscalerUnavailable", "Revision is not active."),
 				withDefaultContainerStatuses(), WithRevisionObservedGeneration(1)),
 		}},
 		Key: "foo/pa-inactive",
@@ -847,6 +876,13 @@ func deploy(t *testing.T, namespace, name string, opts ...interface{}) *appsv1.D
 	if err != nil {
 		t.Fatal("failed to create deployment")
 	}
+
+	for _, opt := range opts {
+		if deploymentOpt, ok := opt.(deploymentOption); ok {
+			deploymentOpt(deployment)
+		}
+	}
+
 	return deployment
 }
 

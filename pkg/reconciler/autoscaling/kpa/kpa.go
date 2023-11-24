@@ -219,6 +219,10 @@ func (c *Reconciler) reconcileDecider(ctx context.Context, pa *autoscalingv1alph
 }
 
 func computeStatus(ctx context.Context, pa *autoscalingv1alpha1.PodAutoscaler, pc podCounts, logger *zap.SugaredLogger) {
+	if pc.want == -1 && pa.Status.DesiredScale != nil && *pa.Status.DesiredScale > -1 {
+		logger.Infof("SASCHA Skipping updating desired scale to -1")
+		return
+	}
 	pa.Status.DesiredScale, pa.Status.ActualScale = ptr.Int32(int32(pc.want)), ptr.Int32(int32(pc.ready))
 
 	reportMetrics(pa, pc)

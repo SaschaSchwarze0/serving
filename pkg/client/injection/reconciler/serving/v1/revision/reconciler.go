@@ -328,15 +328,16 @@ func (r *reconcilerImpl) updateStatus(ctx context.Context, logger *zap.SugaredLo
 			return nil
 		}
 
+		diff, _ := kmp.SafeDiff(existing.Status, desired.Status)
 		if logger.Desugar().Core().Enabled(zapcore.DebugLevel) {
-			if diff, err := kmp.SafeDiff(existing.Status, desired.Status); err == nil && diff != "" {
-				logger.Debug("Updating status with: ", diff)
-			}
+			logger.Debug("Updating status with: ", diff)
 		}
 
 		existing.Status = desired.Status
 
 		updater := r.Client.ServingV1().Revisions(existing.Namespace)
+
+		logger.Infof("SASCHA updating status of Revision %s/%s with diff %s", existing.Namespace, existing.Name, diff)
 
 		_, err = updater.UpdateStatus(ctx, existing, metav1.UpdateOptions{})
 		return err

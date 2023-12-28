@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 
 	"go.opencensus.io/stats"
 	"go.uber.org/zap"
@@ -51,6 +52,14 @@ const (
 	noTrafficReason      = "NoTraffic"
 	minActivators        = 2
 )
+
+var (
+	ignoreSwitchToNegativeDesiredScale = false
+)
+
+func init() {
+	ignoreSwitchToNegativeDesiredScale = os.Getenv("IGNORE_SWITCH_TO_NEGATIVE_DESIRED_SCALE") == "true"
+}
 
 // podCounts keeps record of various numbers of pods
 // for each revision.
@@ -219,7 +228,10 @@ func (c *Reconciler) reconcileDecider(ctx context.Context, pa *autoscalingv1alph
 }
 
 func computeStatus(ctx context.Context, pa *autoscalingv1alpha1.PodAutoscaler, pc podCounts, logger *zap.SugaredLogger) {
-	pa.Status.DesiredScale, pa.Status.ActualScale = ptr.Int32(int32(pc.want)), ptr.Int32(int32(pc.ready))
+	pa.Status.ActualScale = ptr.Int32(int32(pc.ready))
+	if !ignoreSwitchToNegativeDesiredScale || pc.want > -1 || pa.Status.DesiredScale == nil || *pa.Status.DesiredScale < 0 {
+		pa.Status.DesiredScale = ptr.Int32(int32(pc.want))
+	}
 
 	reportMetrics(pa, pc)
 	computeActiveCondition(ctx, pa, pc)

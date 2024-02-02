@@ -46,6 +46,7 @@ import (
 
 var (
 	deploymentUpdatesWaitTime time.Duration
+	podIsAlwaysSchedulable    bool
 )
 
 func init() {
@@ -57,6 +58,8 @@ func init() {
 		}
 		deploymentUpdatesWaitTime = time.Duration(deploymentUpdatesWaitTimeSeconds) * time.Second
 	}
+
+	podIsAlwaysSchedulable = os.Getenv("POD_IS_ALWAYS_SCHEDULABLE") == "true"
 }
 
 func (c *Reconciler) reconcileDeployment(ctx context.Context, rev *v1.Revision) error {
@@ -119,6 +122,11 @@ func (c *Reconciler) reconcileDeployment(ctx context.Context, rev *v1.Revision) 
 			// If pod cannot be scheduled then we expect the container status to be empty.
 			for _, cond := range pod.Status.Conditions {
 				if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+					if podIsAlwaysSchedulable && cond.Reason == corev1.PodReasonUnschedulable {
+						logger.Warnf("Pod %s/%s is currently unschedulable", pod.Namespace, pod.Name)
+						break
+					}
+
 					rev.Status.MarkResourcesAvailableFalse(cond.Reason, cond.Message)
 					break
 				}

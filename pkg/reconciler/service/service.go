@@ -130,6 +130,10 @@ func (c *Reconciler) config(ctx context.Context, service *v1.Service) (*v1.Confi
 	configName := resourcenames.Configuration(service)
 	config, err := c.configurationLister.Configurations(service.Namespace).Get(configName)
 	if apierrs.IsNotFound(err) {
+		if err = rateLimit(ctx, service.Namespace); err != nil {
+			return nil, err
+		}
+
 		config, err = c.createConfiguration(ctx, service)
 		if err != nil {
 			recorder.Eventf(service, corev1.EventTypeWarning, "CreationFailed", "Failed to create Configuration %q: %v", configName, err)
@@ -153,6 +157,10 @@ func (c *Reconciler) route(ctx context.Context, service *v1.Service) (*v1.Route,
 	routeName := resourcenames.Route(service)
 	route, err := c.routeLister.Routes(service.Namespace).Get(routeName)
 	if apierrs.IsNotFound(err) {
+		if err = rateLimit(ctx, service.Namespace); err != nil {
+			return nil, err
+		}
+
 		route, err = c.createRoute(ctx, service)
 		if err != nil {
 			recorder.Eventf(service, corev1.EventTypeWarning, "CreationFailed", "Failed to create Route %q: %v", routeName, err)
@@ -234,6 +242,10 @@ func (c *Reconciler) reconcileConfiguration(ctx context.Context, service *v1.Ser
 		return config, nil
 	}
 
+	if err = rateLimit(ctx, service.Namespace); err != nil {
+		return nil, err
+	}
+
 	logger := logging.FromContext(ctx)
 	logger.Warnf("Service-delegated Configuration %q diff found. Clobbering.", existing.Name)
 
@@ -277,6 +289,10 @@ func (c *Reconciler) reconcileRoute(ctx context.Context, service *v1.Service, ro
 	}
 	if equals {
 		return route, nil
+	}
+
+	if err = rateLimit(ctx, service.Namespace); err != nil {
+		return nil, err
 	}
 
 	// Preserve the rest of the object (e.g. ObjectMeta except for labels and annotations).
